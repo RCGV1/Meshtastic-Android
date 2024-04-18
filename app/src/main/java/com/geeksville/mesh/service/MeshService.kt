@@ -420,6 +420,9 @@ class MeshService : Service(), Logging {
         }
     }
 
+    private fun getLongName(num: Int) =
+        nodeDBbyNodeNum[num]?.user?.longName ?: getString(R.string.unknown_username)
+
     private val numNodes get() = nodeDBbyNodeNum.size
 
     /**
@@ -668,7 +671,7 @@ class MeshService : Service(), Logging {
                         val isAck = u.errorReasonValue == MeshProtos.Routing.Error.NONE_VALUE
 
                         if (u.errorReason == MeshProtos.Routing.Error.DUTY_CYCLE_LIMIT) {
-                            radioInterfaceService.setErrorMessage(getString(R.string.error_duty_cycle))
+                            radioConfigRepository.setErrorMessage(getString(R.string.error_duty_cycle))
                         }
 
                         handleAckNak(isAck, fromId, data.requestId)
@@ -698,6 +701,15 @@ class MeshService : Service(), Logging {
                         val u = dataPacket.copy(dataType = Portnums.PortNum.TEXT_MESSAGE_APP_VALUE)
                         rememberDataPacket(u)
                         updateMessageNotification(u)
+                    }
+
+                    Portnums.PortNum.TRACEROUTE_APP_VALUE -> {
+                        val parsed = MeshProtos.RouteDiscovery.parseFrom(data.payload)
+                        radioConfigRepository.setTracerouteResponse(buildString {
+                            append("${getLongName(packet.to)} --> ")
+                            parsed.routeList.forEach { num -> append("${getLongName(num)} --> ") }
+                            append(getLongName(packet.from))
+                        })
                     }
 
                     else -> debug("No custom processing needed for ${data.portnumValue}")
@@ -984,6 +996,10 @@ class MeshService : Service(), Logging {
                 packet.toString()
             )
             insertMeshLog(packetToSave)
+
+            serviceScope.handledLaunch {
+                radioConfigRepository.emitMeshPacket(packet)
+            }
 
             // Update last seen for the node that sent the packet, but also for _our node_ because anytime a packet passes
             // through our node on the way to the phone that means that local node is also alive in the mesh
@@ -1312,7 +1328,6 @@ class MeshService : Service(), Logging {
         )
         insertMeshLog(packetToSave)
 
-        logAssert(newNodes.size <= 256) // Sanity check to make sure a device bug can't fill this list forever
         newNodes.add(info)
     }
 
@@ -1435,7 +1450,7 @@ class MeshService : Service(), Logging {
             mqttMessageFlow = mqttRepository.proxyMessageFlow.onEach { message ->
                 sendToRadio(ToRadio.newBuilder().apply { mqttClientProxyMessage = message })
             }.catch { throwable ->
-                radioInterfaceService.setErrorMessage("MqttClientProxy failed: $throwable")
+                radioConfigRepository.setErrorMessage("MqttClientProxy failed: $throwable")
             }.launchIn(serviceScope)
         }
     }
@@ -1863,15 +1878,32 @@ class MeshService : Service(), Logging {
         override fun stopProvideLocation() = toRemoteExceptions {
             stopLocationRequests()
         }
+        override fun removeByNodenum(requestId: Int, nodeNum: Int) = toRemoteExceptions {
+            sendToRadio(newMeshPacketTo(myNodeNum).buildAdminPacket {
+                removeByNodenum = nodeNum
 
+            })
+
+        }
         override fun requestPosition(destNum: Int, position: Position) = toRemoteExceptions {
-            if (position == Position(0.0, 0.0, 0)) {
+            if (destNum != myNodeNum) {
                 // request position
                 sendPosition(destNum = destNum, wantResponse = true)
             } else {
                 // send fixed position (local only/no remote method, so we force destNum to null)
                 val (lat, lon, alt) = position
                 sendPosition(destNum = null, lat = lat, lon = lon, alt = alt)
+                sendToRadio(newMeshPacketTo(destNum).buildAdminPacket {
+                    if (position != Position(0.0, 0.0, 0)) {
+                        setFixedPosition = position {
+                            longitudeI = Position.degI(lon)
+                            latitudeI = Position.degI(lat)
+                            altitude = alt
+                        }
+                    } else {
+                        removeFixedPosition = true
+                    }
+                })
             }
         }
 

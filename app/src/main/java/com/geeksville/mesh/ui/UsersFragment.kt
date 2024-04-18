@@ -1,18 +1,23 @@
 package com.geeksville.mesh.ui
 
-import android.animation.ValueAnimator
 import android.content.Context
-import android.content.res.ColorStateList
-import android.graphics.Color
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
-import android.view.animation.LinearInterpolator
 import androidx.appcompat.widget.PopupMenu
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.platform.ComposeView
-import androidx.core.animation.doOnEnd
+import androidx.compose.ui.unit.dp
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.asLiveData
 import androidx.lifecycle.lifecycleScope
@@ -24,13 +29,15 @@ import com.geeksville.mesh.R
 import com.geeksville.mesh.android.Logging
 import com.geeksville.mesh.databinding.NodelistFragmentBinding
 import com.geeksville.mesh.model.UIViewModel
+import com.geeksville.mesh.ui.components.NodeFilterTextField
 import com.geeksville.mesh.ui.theme.AppTheme
 import com.geeksville.mesh.util.Exceptions
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import dagger.hilt.android.AndroidEntryPoint
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 
 /**
  * Workaround for RecyclerView bug throwing:
@@ -63,30 +70,16 @@ class UsersFragment : ScreenFragment("Users"), Logging {
 
     class ViewHolder(val composeView: ComposeView) : RecyclerView.ViewHolder(composeView) {
 
-        // TODO not working with compose changes
-        fun blink() {
-            val bg = composeView.backgroundTintList
-            ValueAnimator.ofArgb(
-                Color.parseColor("#00FFFFFF"),
-                Color.parseColor("#33FFFFFF")
-            ).apply {
-                interpolator = LinearInterpolator()
-                startDelay = 500
-                duration = 250
-                repeatCount = 3
-                repeatMode = ValueAnimator.REVERSE
-                addUpdateListener {
-                    composeView.backgroundTintList = ColorStateList.valueOf(it.animatedValue as Int)
-                }
-                start()
-                doOnEnd {
-                    composeView.backgroundTintList = bg
-                }
-            }
+        var shouldBlink by mutableStateOf(false)
+
+        suspend fun blink() {
+            shouldBlink = true
+            delay(500)
+            shouldBlink = false
         }
 
         fun bind(
-            thisNodeInfo: NodeInfo,
+            thisNodeInfo: NodeInfo?,
             thatNodeInfo: NodeInfo,
             gpsFormat: Int,
             distanceUnits: Int,
@@ -101,7 +94,8 @@ class UsersFragment : ScreenFragment("Users"), Logging {
                         gpsFormat = gpsFormat,
                         distanceUnits = distanceUnits,
                         tempInFahrenheit = tempInFahrenheit,
-                        onClicked = onChipClicked
+                        onClicked = onChipClicked,
+                        blinking = shouldBlink,
                     )
                 }
             }
@@ -113,15 +107,15 @@ class UsersFragment : ScreenFragment("Users"), Logging {
         var nodes = arrayOf<NodeInfo>()
             private set
 
-        private fun popup(view: View, position: Int) {
+        private fun popup(view: View, node: NodeInfo) {
             if (!model.isConnected()) return
-            val node = nodes[position]
             val user = node.user ?: return
-            val showAdmin = position == 0 || model.hasAdminChannel
+            val isOurNode = node.num == model.myNodeNum
+            val showAdmin = isOurNode || model.hasAdminChannel
             val isIgnored = ignoreIncomingList.contains(node.num)
             val popup = PopupMenu(requireContext(), view)
             popup.inflate(R.menu.menu_nodes)
-            popup.menu.setGroupVisible(R.id.group_remote, position > 0)
+            popup.menu.setGroupVisible(R.id.group_remote, !isOurNode)
             popup.menu.setGroupVisible(R.id.group_admin, showAdmin)
             popup.menu.setGroupEnabled(R.id.group_admin, !model.isManaged)
             popup.menu.findItem(R.id.ignore).apply {
@@ -146,6 +140,14 @@ class UsersFragment : ScreenFragment("Users"), Logging {
                         debug("requesting traceroute for '${user.longName}'")
                         model.requestTraceroute(node.num)
                     }
+                    R.id.forget_node -> {
+                        debug("Forgetting node '${user.longName}'")
+
+                            model.forgetNode(node.num)
+                            onNodesChanged(nodes)
+
+
+                    }
                     R.id.ignore -> {
                         val message = if (isIgnored) R.string.ignore_remove else R.string.ignore_add
                         MaterialAlertDialogBuilder(requireContext())
@@ -163,7 +165,7 @@ class UsersFragment : ScreenFragment("Users"), Logging {
                                     }
                                 }
                                 item.isChecked = !item.isChecked
-                                notifyItemChanged(position)
+                                notifyItemChanged(nodes.indexOfFirst { it.num == node.num })
                             }
                             .show()
                     }
@@ -188,7 +190,7 @@ class UsersFragment : ScreenFragment("Users"), Logging {
         override fun getItemCount(): Int = nodes.size
 
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
-            val thisNode = nodes[0]
+            val thisNode = model.ourNodeInfo.value
             val thatNode = nodes[position]
 
             holder.bind(
@@ -198,7 +200,7 @@ class UsersFragment : ScreenFragment("Users"), Logging {
                 distanceUnits = displayUnits,
                 tempInFahrenheit = displayFahrenheit
             ) {
-                popup(holder.composeView, position)
+                popup(holder.composeView, thatNode)
             }
         }
 
@@ -208,11 +210,18 @@ class UsersFragment : ScreenFragment("Users"), Logging {
 
         // Called when our node DB changes
         fun onNodesChanged(nodesIn: Array<NodeInfo>) {
-            if (nodesIn.size > 1) {
-                nodesIn.sortWith(compareByDescending { it.lastHeard }, 1)
+            if (nodesIn.isEmpty()) {
+                notifyItemRangeRemoved(0, nodes.size)
+                nodes = emptyArray()
+                return
             }
 
             val previousNodes = nodes
+
+            if (nodesIn.size < previousNodes.size) {
+                notifyItemRangeRemoved(nodesIn.size, previousNodes.size - nodesIn.size)
+            }
+
             val indexChanged = nodesIn.mapIndexed { index, nodeInfo ->
                 previousNodes.getOrNull(index) != nodeInfo
             }
@@ -242,8 +251,10 @@ class UsersFragment : ScreenFragment("Users"), Logging {
         binding.nodeListView.adapter = nodesAdapter
         binding.nodeListView.layoutManager = LinearLayoutManagerWrapper(requireContext())
 
-        model.nodeDB.nodeDBbyNum.asLiveData().observe(viewLifecycleOwner) {
-            nodesAdapter.onNodesChanged(it.values.toTypedArray())
+        binding.nodeFilter.initFilter()
+
+        model.filteredNodes.asLiveData().observe(viewLifecycleOwner) { nodeMap ->
+            nodesAdapter.onNodesChanged(nodeMap.values.toTypedArray())
         }
 
         model.localConfig.asLiveData().observe(viewLifecycleOwner) { config ->
@@ -278,10 +289,18 @@ class UsersFragment : ScreenFragment("Users"), Logging {
             if (idx < 1) return@observe
 
             lifecycleScope.launch {
-                binding.nodeListView.layoutManager?.smoothScrollToTop(idx)
-                val vh = binding.nodeListView.findViewHolderForLayoutPosition(idx)
-                (vh as? ViewHolder)?.blink()
-                model.focusUserNode(null)
+                with (binding.nodeListView.layoutManager as LinearLayoutManager) {
+                    smoothScrollToTop(idx)
+                    binding.nodeListView.awaitScrollStateIdle()
+
+                    if (!isIndexAtTop(idx)) { // settle the scroll position
+                        smoothScrollToTop(idx)
+                    }
+
+                    val vh = binding.nodeListView.findViewHolderForLayoutPosition(idx)
+                    (vh as? ViewHolder)?.blink() ?: warn("viewholder wasn't there. May need to wait for it")
+                    model.focusUserNode(null)
+                }
             }
         }
     }
@@ -294,8 +313,11 @@ class UsersFragment : ScreenFragment("Users"), Logging {
     /**
      * Scrolls the recycler view until the item at [position] is at the top of the view, then waits
      * until the scrolling is finished.
+     * @param precision The time in milliseconds to wait between checks for the scroll state.
      */
-    private suspend fun RecyclerView.LayoutManager.smoothScrollToTop(position: Int) {
+    private suspend fun RecyclerView.LayoutManager.smoothScrollToTop(
+        position: Int, precision: Long = 100
+    ) {
         this.startSmoothScroll(
             object : LinearSmoothScroller(requireContext()) {
                 override fun getVerticalSnapPreference(): Int {
@@ -305,10 +327,56 @@ class UsersFragment : ScreenFragment("Users"), Logging {
                 targetPosition = position
             }
         )
-        withContext(Dispatchers.Default) {
-            while (this@smoothScrollToTop.isSmoothScrolling) {
-                // noop
+
+        while (isSmoothScrolling) {
+            delay(precision)
+        }
+    }
+
+    private fun ComposeView.initFilter() {
+        this.setContent {
+            val filterText by model.nodeFilterText.collectAsState()
+            AppTheme {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp)
+                        .shadow(8.dp)
+                ) {
+                    NodeFilterTextField(
+                        filterText = filterText,
+                        onTextChanged = { model.setNodeFilterText(it) }
+                    )
+                }
             }
         }
     }
+
+    private suspend fun RecyclerView.awaitScrollStateIdle() = suspendCancellableCoroutine { continuation ->
+        if (scrollState == RecyclerView.SCROLL_STATE_IDLE) {
+            warn("RecyclerView scrollState is already idle")
+            continuation.resume(Unit)
+            return@suspendCancellableCoroutine
+        }
+
+        val scrollListener = object : RecyclerView.OnScrollListener() {
+            override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
+                if (newState == RecyclerView.SCROLL_STATE_IDLE) {
+                    recyclerView.removeOnScrollListener(this)
+                    continuation.resume(Unit)
+                }
+            }
+        }
+        addOnScrollListener(scrollListener)
+        continuation.invokeOnCancellation {
+            removeOnScrollListener(scrollListener)
+        }
+    }
+
+    fun LinearLayoutManager.isIndexAtTop(idx: Int): Boolean {
+        val first = findFirstVisibleItemPosition()
+        val firstVisible = findFirstCompletelyVisibleItemPosition()
+        return first == idx && firstVisible == idx
+    }
+
 }

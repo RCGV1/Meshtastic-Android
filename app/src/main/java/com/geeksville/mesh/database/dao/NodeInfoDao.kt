@@ -25,7 +25,7 @@ interface NodeInfoDao {
     @Query("SELECT * FROM NodeInfo")
     fun getNodes(): Flow<List<NodeInfo>>
 
-    @Query("SELECT * FROM NodeInfo ORDER BY CASE WHEN num = (SELECT myNodeNum FROM MyNodeInfo LIMIT 1) THEN 0 ELSE 1 END, num ASC")
+    @Query("SELECT * FROM NodeInfo ORDER BY CASE WHEN num = (SELECT myNodeNum FROM MyNodeInfo LIMIT 1) THEN 0 ELSE 1 END, lastHeard DESC")
     fun nodeDBbyNum(): Flow<Map<@MapColumn(columnName = "num") Int, NodeInfo>>
 
     @Query("SELECT * FROM NodeInfo")
@@ -42,6 +42,9 @@ interface NodeInfoDao {
 
     @Query("DELETE FROM NodeInfo")
     fun clearNodeInfo()
+
+    @Query("DELETE FROM NodeInfo WHERE num=:num")
+    fun delNode(num: Int)
 
     @Query("SELECT * FROM NodeInfo WHERE num=:num")
     fun getNodeInfo(num: Int): NodeInfo?
