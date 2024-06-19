@@ -18,7 +18,6 @@ import androidx.compose.material.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -50,19 +49,14 @@ import com.geeksville.mesh.database.entity.Packet
 import com.geeksville.mesh.model.UIViewModel
 import com.geeksville.mesh.model.map.CustomTileSource
 import com.geeksville.mesh.model.map.MarkerWithLabel
-import com.geeksville.mesh.ui.MessagesFragment
 import com.geeksville.mesh.ui.ScreenFragment
-import com.geeksville.mesh.ui.map.components.CacheLayout
-import com.geeksville.mesh.ui.map.components.DownloadButton
-import com.geeksville.mesh.ui.map.components.EditWaypointDialog
 import com.geeksville.mesh.ui.components.IconButton
-import com.geeksville.mesh.ui.map.components.rememberMapViewWithLifecycle
+import com.geeksville.mesh.ui.theme.AppTheme
 import com.geeksville.mesh.util.SqlTileWriterExt
 import com.geeksville.mesh.util.requiredZoomLevel
 import com.geeksville.mesh.util.formatAgo
 import com.geeksville.mesh.util.zoomIn
 import com.geeksville.mesh.waypoint
-import com.google.accompanist.themeadapter.appcompat.AppCompatTheme
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import dagger.hilt.android.AndroidEntryPoint
 import org.osmdroid.bonuspack.utils.BonusPackHelper.getBitmapFromVectorDrawable
@@ -90,7 +84,6 @@ import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
 import java.io.File
 import java.text.DateFormat
 
-
 @AndroidEntryPoint
 class MapFragment : ScreenFragment("Map Fragment"), Logging {
 
@@ -104,7 +97,7 @@ class MapFragment : ScreenFragment("Map Fragment"), Logging {
         return ComposeView(requireContext()).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
             setContent {
-                AppCompatTheme {
+                AppTheme {
                     MapView(model)
                 }
             }
@@ -192,8 +185,8 @@ fun MapView(
         requestPermissionAndToggleLauncher.launch(context.getLocationPermissions())
     }
 
-    val nodes by model.nodeDB.nodes.collectAsStateWithLifecycle()
-    val waypoints by model.waypoints.observeAsState(emptyMap())
+    val nodes by model.nodeList.collectAsStateWithLifecycle()
+    val waypoints by model.waypoints.collectAsStateWithLifecycle(emptyMap())
 
     var showDownloadButton: Boolean by remember { mutableStateOf(false) }
     var showEditWaypointDialog by remember { mutableStateOf<Waypoint?>(null) }
@@ -261,7 +254,7 @@ fun MapView(
     fun showMarkerLongPressDialog(id: Int) {
         performHapticFeedback()
         debug("marker long pressed id=${id}")
-        val waypoint = model.waypoints.value?.get(id)?.data?.waypoint ?: return
+        val waypoint = waypoints[id]?.data?.waypoint ?: return
         // edit only when unlocked or lockedTo myNodeNum
         if (waypoint.lockedTo in setOf(0, model.myNodeNum ?: 0) && model.isConnected())
             showEditWaypointDialog = waypoint
@@ -462,7 +455,7 @@ fun MapView(
     }
 
     with(map) {
-        UpdateMarkers(onNodesChanged(nodes.values), onWaypointChanged(waypoints.values))
+        UpdateMarkers(onNodesChanged(nodes), onWaypointChanged(waypoints.values))
     }
 
 //    private fun addWeatherLayer() {
@@ -482,7 +475,7 @@ fun MapView(
 //    }
 
     fun MapView.zoomToNodes() {
-        val nodeMarkers = onNodesChanged(nodes.values)
+        val nodeMarkers = onNodesChanged(model.nodeDB.nodesByNum.values)
         if (nodeMarkers.isNotEmpty()) {
             val box = BoundingBox.fromGeoPoints(nodeMarkers.map { it.position })
             val center = GeoPoint(box.centerLatitude, box.centerLongitude)

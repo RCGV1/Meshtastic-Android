@@ -2,6 +2,7 @@ package com.geeksville.mesh
 
 import android.graphics.Color
 import android.os.Parcelable
+import androidx.room.ColumnInfo
 import androidx.room.Embedded
 import androidx.room.Entity
 import androidx.room.PrimaryKey
@@ -129,7 +130,8 @@ data class DeviceMetrics(
     val batteryLevel: Int = 0,
     val voltage: Float,
     val channelUtilization: Float,
-    val airUtilTx: Float
+    val airUtilTx: Float,
+    val uptimeSeconds: Int,
 ) : Parcelable {
     companion object {
         fun currentTime() = (System.currentTimeMillis() / 1000).toInt()
@@ -142,12 +144,9 @@ data class DeviceMetrics(
         p.batteryLevel,
         p.voltage,
         p.channelUtilization,
-        p.airUtilTx
+        p.airUtilTx,
+        p.uptimeSeconds,
     )
-
-    override fun toString(): String {
-        return "DeviceMetrics(time=${time}, batteryLevel=${batteryLevel}, voltage=${voltage}, channelUtilization=${channelUtilization}, airUtilTx=${airUtilTx})"
-    }
 }
 
 @Parcelize
@@ -159,6 +158,7 @@ data class EnvironmentMetrics(
     val gasResistance: Float,
     val voltage: Float,
     val current: Float,
+    val iaq: Int,
 ) : Parcelable {
     companion object {
         fun currentTime() = (System.currentTimeMillis() / 1000).toInt()
@@ -173,12 +173,9 @@ data class EnvironmentMetrics(
         t.barometricPressure,
         t.gasResistance,
         t.voltage,
-        t.current
+        t.current,
+        t.iaq,
     )
-
-    override fun toString(): String {
-        return "EnvironmentMetrics(time=${time}, temperature=${temperature}, humidity=${relativeHumidity}, pressure=${barometricPressure}), resistance=${gasResistance}, voltage=${voltage}, current=${current}"
-    }
 
     fun getDisplayString(inFahrenheit: Boolean = false): String {
         val temp = if (temperature != 0f) {
@@ -194,6 +191,7 @@ data class EnvironmentMetrics(
         val gas = if (gasResistance != 0f) String.format("%.0fMΩ", gasResistance) else null
         val voltage = if (voltage != 0f) String.format("%.2fV", voltage) else null
         val current = if (current != 0f) String.format("%.1fmA", current) else null
+        val iaq = if (iaq != 0) "IAQ: $iaq" else null
 
         return listOfNotNull(
             temp,
@@ -201,7 +199,8 @@ data class EnvironmentMetrics(
             pressure,
             gas,
             voltage,
-            current
+            current,
+            iaq,
         ).joinToString(" ")
     }
 
@@ -224,6 +223,8 @@ data class NodeInfo(
     var channel: Int = 0,
     @Embedded(prefix = "envMetrics_")
     var environmentMetrics: EnvironmentMetrics? = null,
+    @ColumnInfo(name = "hopsAway", defaultValue = "0")
+    var hopsAway: Int = 0
 ) : Parcelable {
 
     val colors: Pair<Int, Int>

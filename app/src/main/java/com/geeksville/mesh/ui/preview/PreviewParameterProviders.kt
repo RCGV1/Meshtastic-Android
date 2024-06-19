@@ -28,14 +28,16 @@ class NodeInfoPreviewParameterProvider: PreviewParameterProvider<NodeInfo> {
             channelUtilization = 2.4F,
             airUtilTx = 3.5F,
             batteryLevel = 85,
-            voltage = 3.7F
+            voltage = 3.7F,
+            uptimeSeconds = 3600,
         ),
         user = MeshUser(
             longName = "Micky Mouse",
             shortName = "MM",
             id = "mickeyMouseId",
             hwModel = MeshProtos.HardwareModel.TBEAM
-        )
+        ),
+        hopsAway = 0
     )
 
     private val minnieMouse = mickeyMouse.copy(
@@ -48,7 +50,8 @@ class NodeInfoPreviewParameterProvider: PreviewParameterProvider<NodeInfo> {
         ),
         snr = 12.5F,
         rssi = -42,
-        position = null
+        position = null,
+        hopsAway = 1
     )
 
     private val donaldDuck = NodeInfo(
@@ -66,7 +69,8 @@ class NodeInfoPreviewParameterProvider: PreviewParameterProvider<NodeInfo> {
             channelUtilization = 2.4F,
             airUtilTx = 3.5F,
             batteryLevel = 85,
-            voltage = 3.7F
+            voltage = 3.7F,
+            uptimeSeconds = 3600,
         ),
         user = MeshUser(
             longName = "Donald Duck, the Grand Duck of the Ducks",
@@ -80,8 +84,10 @@ class NodeInfoPreviewParameterProvider: PreviewParameterProvider<NodeInfo> {
             barometricPressure = 1013.25F,
             gasResistance = 0.0F,
             voltage = 3.7F,
-            current = 0.0F
-        )
+            current = 0.0F,
+            iaq = 100,
+        ),
+        hopsAway = 2
     )
 
     private val unknown = donaldDuck.copy(

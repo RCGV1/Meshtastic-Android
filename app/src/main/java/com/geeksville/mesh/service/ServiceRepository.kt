@@ -42,6 +42,15 @@ class ServiceRepository @Inject constructor() : Logging {
         _errorMessage.value = null
     }
 
+    private val _statusMessage = MutableStateFlow<String?>(null)
+    val statusMessage: StateFlow<String?> get() = _statusMessage
+
+    fun setStatusMessage(text: String) {
+        if (connectionState.value != MeshService.ConnectionState.CONNECTED) {
+            _statusMessage.value = text
+        }
+    }
+
     private val _meshPacketFlow = MutableSharedFlow<MeshPacket>()
     val meshPacketFlow: SharedFlow<MeshPacket> get() = _meshPacketFlow
 

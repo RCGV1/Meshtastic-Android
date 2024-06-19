@@ -22,13 +22,16 @@ fun signalInfo(
             nodeInfo.deviceMetrics?.airUtilTx
         )
     } else {
-        buildString {
-            if (nodeInfo.channel > 0) append("ch:${nodeInfo.channel}")
-            if (nodeInfo.snr < 100F && nodeInfo.rssi < 0) {
-                if (isNotEmpty()) append(" ")
-                append("RSSI: %d SNR: %.1f".format(nodeInfo.rssi, nodeInfo.snr))
+        buildList {
+            if (nodeInfo.channel > 0) add("ch:${nodeInfo.channel}")
+            if (nodeInfo.hopsAway == 0) {
+                if (nodeInfo.snr < 100F && nodeInfo.rssi < 0) {
+                    add("RSSI: %d SNR: %.1f".format(nodeInfo.rssi, nodeInfo.snr))
+                }
+            } else {
+                add("Hops Away: %d".format(nodeInfo.hopsAway))
             }
-        }
+        }.joinToString(" ")
     }
     return if (text.isNotEmpty()) {
         Text(
@@ -56,7 +59,8 @@ fun SignalInfoSimplePreview() {
                 snr = 12.5F,
                 rssi = -42,
                 deviceMetrics = null,
-                user = null
+                user = null,
+                hopsAway = 0
             ),
             isThisNode = false
         )

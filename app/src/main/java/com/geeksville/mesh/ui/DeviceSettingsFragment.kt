@@ -21,13 +21,12 @@ import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.AlertDialog
-import androidx.compose.material.ButtonDefaults
+import androidx.compose.material.Button
 import androidx.compose.material.Card
 import androidx.compose.material.ContentAlpha
 import androidx.compose.material.Icon
 import androidx.compose.material.IconButton
 import androidx.compose.material.MaterialTheme
-import androidx.compose.material.OutlinedButton
 import androidx.compose.material.Scaffold
 import androidx.compose.material.Text
 import androidx.compose.material.TopAppBar
@@ -48,7 +47,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import androidx.fragment.app.activityViewModels
+import androidx.fragment.app.setFragmentResultListener
+import androidx.fragment.app.viewModels
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
@@ -61,7 +61,6 @@ import com.geeksville.mesh.android.Logging
 import com.geeksville.mesh.config
 import com.geeksville.mesh.model.Channel
 import com.geeksville.mesh.model.RadioConfigViewModel
-import com.geeksville.mesh.model.UIViewModel
 import com.geeksville.mesh.moduleConfig
 import com.geeksville.mesh.service.MeshService.ConnectionState
 import com.geeksville.mesh.ui.components.PreferenceCategory
@@ -95,18 +94,22 @@ import dagger.hilt.android.AndroidEntryPoint
 @AndroidEntryPoint
 class DeviceSettingsFragment : ScreenFragment("Radio Configuration"), Logging {
 
-    private val model: UIViewModel by activityViewModels()
+    private val model: RadioConfigViewModel by viewModels()
 
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View {
+        setFragmentResultListener("requestKey") { _, bundle ->
+            val destNum = bundle.getInt("destNum")
+            model.setDestNum(destNum)
+        }
+
         return ComposeView(requireContext()).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
             setBackgroundColor(ContextCompat.getColor(context, R.color.colorAdvancedBackground))
             setContent {
-                // TODO change destNode to destNum and pass as navigation argument
                 val node by model.destNode.collectAsStateWithLifecycle()
 
                 AppCompatTheme {
@@ -138,6 +141,7 @@ class DeviceSettingsFragment : ScreenFragment("Radio Configuration"), Logging {
                     ) { innerPadding ->
                         RadioConfigNavHost(
                             node = node,
+                            viewModel = model,
                             navController = navController,
                             modifier = Modifier.padding(innerPadding),
                         )
@@ -231,12 +235,10 @@ fun RadioConfigNavHost(
     val connectionState by viewModel.connectionState.collectAsStateWithLifecycle()
     val connected = connectionState == ConnectionState.CONNECTED && node != null
 
-    val myNodeInfo by viewModel.myNodeInfo.collectAsStateWithLifecycle() // FIXME
     val destNum = node?.num ?: 0
-    val isLocal = destNum == myNodeInfo?.myNodeNum
+    val isLocal = destNum == viewModel.myNodeNum
 
     val radioConfigState by viewModel.radioConfigState.collectAsStateWithLifecycle()
-    var location by remember(node) { mutableStateOf(node?.position) } // FIXME
 
     val deviceProfile by viewModel.deviceProfile.collectAsStateWithLifecycle()
     val isWaiting = radioConfigState.responseState.isWaiting()
@@ -289,7 +291,8 @@ fun RadioConfigNavHost(
             viewModel.clearPacketResponse()
         },
         onComplete = {
-            navController.navigate(radioConfigState.route)
+            val route = radioConfigState.route
+            if (route.isNotEmpty()) navController.navigate(route)
             viewModel.clearPacketResponse()
         }
     )
@@ -327,6 +330,7 @@ fun RadioConfigNavHost(
 
                         "EXPORT" -> {
                             viewModel.clearPacketResponse()
+                            viewModel.setDeviceProfile(null)
                             showEditDeviceProfileDialog = true
                         }
 
@@ -399,14 +403,13 @@ fun RadioConfigNavHost(
         composable(ConfigRoute.POSITION.name) {
             PositionConfigItemList(
                 isLocal = isLocal,
-                location = location,
+                location = node?.position,
                 positionConfig = radioConfigState.radioConfig.position,
                 enabled = connected,
                 onSaveClicked = { locationInput, positionInput ->
                     if (positionInput.fixedPosition) {
-                        if (locationInput != null && locationInput != location) {
+                        if (locationInput != null && locationInput != node?.position) {
                             viewModel.setFixedPosition(locationInput)
-                            location = locationInput
                         }
                     } else {
                         if (radioConfigState.radioConfig.position.fixedPosition) {
@@ -677,20 +680,19 @@ private fun NavButton(@StringRes title: Int, enabled: Boolean, onClick: () -> Un
         buttons = {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                OutlinedButton(
+                Button(
                     modifier = Modifier.weight(1f),
                     onClick = { showDialog = false },
-                    colors = ButtonDefaults.buttonColors(),
                 ) { Text(stringResource(R.string.cancel)) }
-                OutlinedButton(
+                Button(
                     modifier = Modifier.weight(1f),
                     onClick = {
                         showDialog = false
                         onClick()
                     },
-                    colors = ButtonDefaults.buttonColors(),
                 ) { Text(stringResource(R.string.send)) }
             }
         }
@@ -698,15 +700,12 @@ private fun NavButton(@StringRes title: Int, enabled: Boolean, onClick: () -> Un
 
     Column {
         Spacer(modifier = Modifier.height(4.dp))
-        OutlinedButton(
+        Button(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(48.dp),
             enabled = enabled,
             onClick = { showDialog = true },
-            colors = ButtonDefaults.buttonColors(
-                disabledContentColor = MaterialTheme.colors.onSurface.copy(alpha = ContentAlpha.disabled)
-            )
         ) { Text(text = stringResource(title)) }
     }
 }

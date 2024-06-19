@@ -18,7 +18,6 @@ import com.geeksville.mesh.ChannelProtos.ChannelSettings
 import com.geeksville.mesh.ConfigProtos.Config
 import com.geeksville.mesh.database.MeshLogRepository
 import com.geeksville.mesh.database.QuickChatActionRepository
-import com.geeksville.mesh.database.entity.Packet
 import com.geeksville.mesh.database.entity.QuickChatAction
 import com.geeksville.mesh.LocalOnlyProtos.LocalConfig
 import com.geeksville.mesh.LocalOnlyProtos.LocalModuleConfig
@@ -32,6 +31,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted.Companion.WhileSubscribed
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -39,6 +39,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.BufferedWriter
@@ -97,6 +98,16 @@ internal fun getChannelList(
     }
 }
 
+data class NodesUiState(
+    val sort: NodeSortOption = NodeSortOption.LAST_HEARD,
+    val filter: String = "",
+    val includeUnknown: Boolean = false,
+) {
+    companion object {
+        val Empty = NodesUiState()
+    }
+}
+
 @HiltViewModel
 class UIViewModel @Inject constructor(
     private val app: Application,
@@ -114,9 +125,6 @@ class UIViewModel @Inject constructor(
 
     val bondedAddress get() = radioInterfaceService.getBondedDeviceAddress()
     val selectedBluetooth get() = radioInterfaceService.getDeviceAddress()?.getOrNull(0) == 'x'
-
-    private val _packets = MutableStateFlow<List<Packet>>(emptyList())
-    val packets: StateFlow<List<Packet>> = _packets
 
     private val _localConfig = MutableStateFlow<LocalConfig>(LocalConfig.getDefaultInstance())
     val localConfig: StateFlow<LocalConfig> = _localConfig
@@ -136,17 +144,42 @@ class UIViewModel @Inject constructor(
     private val _focusedNode = MutableStateFlow<NodeInfo?>(null)
     val focusedNode: StateFlow<NodeInfo?> = _focusedNode
 
-    private val _nodeFilterText = MutableStateFlow("")
-    val nodeFilterText: StateFlow<String> = _nodeFilterText
+    private val nodeFilterText = MutableStateFlow("")
+    private val nodeSortOption = MutableStateFlow(NodeSortOption.LAST_HEARD)
+    private val includeUnknown = MutableStateFlow(false)
 
-    val filteredNodes = nodeDB.nodeDBbyNum.combine(_nodeFilterText) { nodes, filterText ->
-        if (filterText.isBlank()) return@combine nodes
-
-        nodes.filter { entry ->
-            entry.value.user?.longName?.contains(filterText, ignoreCase = true) == true ||
-            entry.value.user?.shortName?.contains(filterText, ignoreCase = true) == true
-        }
+    fun setSortOption(sort: NodeSortOption) {
+        nodeSortOption.value = sort
     }
+
+    fun toggleIncludeUnknown() {
+        includeUnknown.value = !includeUnknown.value
+    }
+
+    val nodesUiState: StateFlow<NodesUiState> = combine(
+        nodeFilterText,
+        nodeSortOption,
+        includeUnknown,
+    ) { filter, sort, includeUnknown ->
+        NodesUiState(
+            sort = sort,
+            filter = filter,
+            includeUnknown = includeUnknown,
+        )
+    }.stateIn(
+        scope = viewModelScope,
+        started = WhileSubscribed(),
+        initialValue = NodesUiState.Empty,
+    )
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val nodeList: StateFlow<List<NodeInfo>> = nodesUiState.flatMapLatest { state ->
+        nodeDB.getNodes(state.sort, state.filter, state.includeUnknown)
+    }.stateIn(
+        scope = viewModelScope,
+        started = WhileSubscribed(5_000),
+        initialValue = emptyList(),
+    )
 
     // hardware info about our local device (can be null)
     val myNodeInfo: StateFlow<MyNodeInfo?> get() = nodeDB.myNodeInfo
@@ -161,11 +194,6 @@ class UIViewModel @Inject constructor(
             radioConfigRepository.clearErrorMessage()
         }.launchIn(viewModelScope)
 
-        viewModelScope.launch {
-            packetRepository.getAllPackets().collect { packets ->
-                _packets.value = packets
-            }
-        }
         radioConfigRepository.localConfigFlow.onEach { config ->
             _localConfig.value = config
         }.launchIn(viewModelScope)
@@ -184,60 +212,12 @@ class UIViewModel @Inject constructor(
         debug("ViewModel created")
     }
 
-    private val _contactKey = MutableStateFlow("0${DataPacket.ID_BROADCAST}")
-    val contactKey: StateFlow<String> = _contactKey
-    fun setContactKey(contact: String) {
-        _contactKey.value = contact
-    }
-
-    fun getContactName(contactKey: String): String {
-        val (channel, dest) = contactKey[0].digitToIntOrNull() to contactKey.substring(1)
-
-        return if (channel == null || dest == DataPacket.ID_BROADCAST) {
-            // grab channel names from ChannelSet
-            val channelName = with(channelSet) {
-                if (channel != null && settingsCount > channel)
-                    Channel(settingsList[channel], loraConfig).name else null
-            }
-            channelName ?: app.getString(R.string.channel_name)
-        } else {
-            // grab usernames from NodeInfo
-            val node = nodeDB.nodes.value[dest]
-            node?.user?.longName ?: app.getString(R.string.unknown_username)
-        }
-    }
+    fun getMessagesFrom(contactKey: String) = packetRepository.getMessagesFrom(contactKey)
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val messages: LiveData<List<Packet>> = contactKey.flatMapLatest { contactKey ->
-        packetRepository.getMessagesFrom(contactKey)
-    }.asLiveData()
-
-    val contacts = combine(packetRepository.getContacts(), channels) { contacts, channelSet ->
-        // Add empty channel placeholders (always show Broadcast contacts, even when empty)
-        val placeholder = (0 until channelSet.settingsCount).associate { ch ->
-            val contactKey = "$ch${DataPacket.ID_BROADCAST}"
-            val data = DataPacket(bytes = null, dataType = 1, time = 0L, channel = ch)
-            contactKey to Packet(0L, 1, contactKey, 0L, data)
-        }
-        contacts + (placeholder - contacts.keys)
-    }.asLiveData()
-
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val waypoints: LiveData<Map<Int, Packet>> = _packets.mapLatest { list ->
-        list.filter { it.port_num == Portnums.PortNum.WAYPOINT_APP_VALUE }
-            .associateBy { packet -> packet.data.waypoint!!.id }
+    val waypoints = packetRepository.getWaypoints().mapLatest { list ->
+        list.associateBy { packet -> packet.data.waypoint!!.id }
             .filterValues { it.data.waypoint!!.expire > System.currentTimeMillis() / 1000 }
-    }.asLiveData()
-
-    private val _destNode = MutableStateFlow<NodeInfo?>(null)
-    val destNode: StateFlow<NodeInfo?> get() = if (_destNode.value != null) _destNode else ourNodeInfo
-
-    /**
-     * Sets the destination [NodeInfo] used in Radio Configuration.
-     * @param node Destination [NodeInfo] (or null for our local NodeInfo).
-     */
-    fun setDestNode(node: NodeInfo?) {
-        _destNode.value = node
     }
 
     fun generatePacketId(): Int? {
@@ -249,7 +229,7 @@ class UIViewModel @Inject constructor(
         }
     }
 
-    fun sendMessage(str: String, contactKey: String = this.contactKey.value) {
+    fun sendMessage(str: String, contactKey: String = "0${DataPacket.ID_BROADCAST}") {
         // contactKey: unique contact key filter (channel)+(nodeId)
         val channel = contactKey[0].digitToIntOrNull()
         val dest = if (channel != null) contactKey.substring(1) else contactKey
@@ -284,17 +264,16 @@ class UIViewModel @Inject constructor(
         }
     }
 
-    fun forgetNode(nodeNum: Int)  {
+    fun removeNode(nodeNum: Int) = viewModelScope.launch(Dispatchers.IO) {
         try {
-            val packetId = meshService?.packetId ?: return
+            val packetId = meshService?.packetId ?: return@launch
             meshService?.removeByNodenum(packetId, nodeNum)
-            viewModelScope.launch(Dispatchers.IO) {
-                nodeDB.delNode(nodeNum)
-            }
+            nodeDB.deleteNode(nodeNum)
         } catch (ex: RemoteException) {
             errormsg("Request traceroute error: ${ex.message}")
         }
     }
+
     fun requestPosition(destNum: Int, position: Position = Position(0.0, 0.0, 0)) {
         try {
             meshService?.requestPosition(destNum, position)
@@ -303,16 +282,16 @@ class UIViewModel @Inject constructor(
         }
     }
 
-    fun deleteAllMessages() = viewModelScope.launch(Dispatchers.IO) {
-        packetRepository.deleteAllMessages()
-    }
-
     fun deleteMessages(uuidList: List<Long>) = viewModelScope.launch(Dispatchers.IO) {
         packetRepository.deleteMessages(uuidList)
     }
 
     fun deleteWaypoint(id: Int) = viewModelScope.launch(Dispatchers.IO) {
         packetRepository.deleteWaypoint(id)
+    }
+
+    fun clearUnreadCount(contact: String, timestamp: Long) = viewModelScope.launch(Dispatchers.IO) {
+        packetRepository.clearUnreadCount(contact, timestamp)
     }
 
     companion object {
@@ -599,7 +578,7 @@ class UIViewModel @Inject constructor(
     }
 
     fun setNodeFilterText(text: String) {
-        _nodeFilterText.value = text
+        nodeFilterText.value = text
     }
 
 }

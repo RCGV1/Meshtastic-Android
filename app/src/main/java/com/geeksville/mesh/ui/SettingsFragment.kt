@@ -20,7 +20,6 @@ import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.asLiveData
 import com.geeksville.mesh.ConfigProtos
 import com.geeksville.mesh.R
-import com.geeksville.mesh.ModuleConfigProtos
 import com.geeksville.mesh.android.*
 import com.geeksville.mesh.databinding.SettingsFragmentBinding
 import com.geeksville.mesh.model.BTScanModel
@@ -189,29 +188,7 @@ class SettingsFragment : ScreenFragment("Settings"), Logging {
         }
 
         model.localConfig.asLiveData().observe(viewLifecycleOwner) {
-            if (!model.isConnected()) {
-                val configCount = it.allFields.size
-                val configTotal = ConfigProtos.Config.getDescriptor().fields.size
-                if (configCount > 0)
-                    scanModel.setErrorText("Device config ($configCount / $configTotal)")
-            } else updateNodeInfo()
-        }
-
-        model.moduleConfig.asLiveData().observe(viewLifecycleOwner) {
-            if (!model.isConnected()) {
-                val moduleCount = it.allFields.size
-                val moduleTotal = ModuleConfigProtos.ModuleConfig.getDescriptor().fields.size
-                if (moduleCount > 0)
-                    scanModel.setErrorText("Module config ($moduleCount / $moduleTotal)")
-            } else updateNodeInfo()
-        }
-
-        model.channels.asLiveData().observe(viewLifecycleOwner) {
-            if (!model.isConnected()) {
-                val maxChannels = model.maxChannels
-                if (!it.hasLoraConfig() && it.settingsCount > 0)
-                    scanModel.setErrorText("Channels (${it.settingsCount} / $maxChannels)")
-            }
+            if (model.isConnected()) updateNodeInfo()
         }
 
         // Also watch myNodeInfo because it might change later
@@ -338,7 +315,7 @@ class SettingsFragment : ScreenFragment("Settings"), Logging {
         val deviceSelectIPAddress = binding.radioButtonManual
         val inputIPAddress = binding.editManualAddress
 
-        deviceSelectIPAddress.isEnabled = false
+        deviceSelectIPAddress.isEnabled = inputIPAddress.text.isIPAddress()
         deviceSelectIPAddress.setOnClickListener {
             deviceSelectIPAddress.isChecked = scanModel.onSelected(BTScanModel.DeviceListEntry("", "t" + inputIPAddress.text, true))
         }

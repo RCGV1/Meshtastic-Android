@@ -61,7 +61,7 @@ class RadioConfigRepository @Inject constructor(
     /**
      * Flow representing the [NodeInfo] database.
      */
-    suspend fun getNodes(): List<NodeInfo>? = nodeDB.nodeInfoFlow().firstOrNull()
+    suspend fun getNodes(): List<NodeInfo>? = nodeDB.getNodes().firstOrNull()
 
     suspend fun upsert(node: NodeInfo) = nodeDB.upsert(node)
     suspend fun installNodeDB(mi: MyNodeInfo, nodes: List<NodeInfo>) {
@@ -143,14 +143,13 @@ class RadioConfigRepository @Inject constructor(
      * Flow representing the combined [DeviceProfile] protobuf.
      */
     val deviceProfileFlow: Flow<DeviceProfile> = combine(
-        myNodeInfoFlow(),
         nodeDBbyNum,
         channelSetFlow,
         localConfigFlow,
         moduleConfigFlow,
-    ) { myInfo, nodes, channels, localConfig, localModuleConfig ->
+    ) { nodes, channels, localConfig, localModuleConfig ->
         deviceProfile {
-            nodes[myInfo?.myNodeNum]?.user?.let {
+            nodes.values.firstOrNull()?.user?.let {
                 longName = it.longName
                 shortName = it.shortName
             }
@@ -168,6 +167,10 @@ class RadioConfigRepository @Inject constructor(
 
     fun clearErrorMessage() {
         serviceRepository.clearErrorMessage()
+    }
+
+    fun setStatusMessage(text: String) {
+        serviceRepository.setStatusMessage(text)
     }
 
     val meshPacketFlow: SharedFlow<MeshPacket> get() = serviceRepository.meshPacketFlow

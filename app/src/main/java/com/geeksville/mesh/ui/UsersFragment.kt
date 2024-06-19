@@ -7,19 +7,20 @@ import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
 import androidx.appcompat.widget.PopupMenu
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
+import androidx.core.os.bundleOf
 import androidx.fragment.app.activityViewModels
+import androidx.fragment.app.setFragmentResult
 import androidx.lifecycle.asLiveData
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.LinearSmoothScroller
@@ -125,12 +126,9 @@ class UsersFragment : ScreenFragment("Users"), Logging {
             popup.setOnMenuItemClickListener { item: MenuItem ->
                 when (item.itemId) {
                     R.id.direct_message -> {
-                        debug("calling MessagesFragment filter: ${node.channel}${user.id}")
-                        model.setContactKey("${node.channel}${user.id}")
-                        parentFragmentManager.beginTransaction()
-                            .replace(R.id.mainActivityLayout, MessagesFragment())
-                            .addToBackStack(null)
-                            .commit()
+                        val contactKey = "${node.channel}${user.id}"
+                        debug("calling MessagesFragment filter: $contactKey")
+                        parentFragmentManager.navigateToMessages(contactKey, user.longName)
                     }
                     R.id.request_position -> {
                         debug("requesting position for '${user.longName}'")
@@ -140,12 +138,17 @@ class UsersFragment : ScreenFragment("Users"), Logging {
                         debug("requesting traceroute for '${user.longName}'")
                         model.requestTraceroute(node.num)
                     }
-                    R.id.forget_node -> {
-                        debug("Forgetting node '${user.longName}'")
+                    R.id.remove -> {
 
-                            model.forgetNode(node.num)
-                            onNodesChanged(nodes)
-
+                        MaterialAlertDialogBuilder(requireContext())
+                            .setTitle(R.string.remove)
+                            .setMessage(getString(R.string.remove_node_text))
+                            .setNeutralButton(R.string.cancel) { _, _ -> }
+                            .setPositiveButton(R.string.send) {_,_ ->
+                                debug("removing node '${user.longName}'")
+                                model.removeNode(node.num)
+                            }
+                            .show()
 
                     }
                     R.id.ignore -> {
@@ -171,7 +174,7 @@ class UsersFragment : ScreenFragment("Users"), Logging {
                     }
                     R.id.remote_admin -> {
                         debug("calling remote admin --> destNum: ${node.num.toUInt()}")
-                        model.setDestNode(node)
+                        setFragmentResult("requestKey", bundleOf("destNum" to node.num))
                         parentFragmentManager.beginTransaction()
                             .replace(R.id.mainActivityLayout, DeviceSettingsFragment())
                             .addToBackStack(null)
@@ -253,8 +256,8 @@ class UsersFragment : ScreenFragment("Users"), Logging {
 
         binding.nodeFilter.initFilter()
 
-        model.filteredNodes.asLiveData().observe(viewLifecycleOwner) { nodeMap ->
-            nodesAdapter.onNodesChanged(nodeMap.values.toTypedArray())
+        model.nodeList.asLiveData().observe(viewLifecycleOwner) { nodeMap ->
+            nodesAdapter.onNodesChanged(nodeMap.toTypedArray())
         }
 
         model.localConfig.asLiveData().observe(viewLifecycleOwner) { config ->
@@ -335,17 +338,24 @@ class UsersFragment : ScreenFragment("Users"), Logging {
 
     private fun ComposeView.initFilter() {
         this.setContent {
-            val filterText by model.nodeFilterText.collectAsState()
+            val nodeViewState by model.nodesUiState.collectAsStateWithLifecycle()
+
             AppTheme {
-                Box(
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 8.dp)
-                        .shadow(8.dp)
                 ) {
                     NodeFilterTextField(
-                        filterText = filterText,
-                        onTextChanged = { model.setNodeFilterText(it) }
+                        filterText = nodeViewState.filter,
+                        onTextChanged = model::setNodeFilterText,
+                        modifier = Modifier.weight(1f)
+                    )
+                    NodeSortButton(
+                        currentSortOption = nodeViewState.sort,
+                        onSortSelected = model::setSortOption,
+                        includeUnknown = nodeViewState.includeUnknown,
+                        onToggleIncludeUnknown = model::toggleIncludeUnknown,
                     )
                 }
             }
