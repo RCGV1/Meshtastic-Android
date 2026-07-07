@@ -137,7 +137,7 @@ fun MessageItemStatusStatesPreview() {
             ),
             StatusPreviewMessage(
                 outgoingStatusPreviewMessage(
-                    text = "No channel selected",
+                    text = "Channel/key mismatch",
                     time = "10:05",
                     status = MessageStatus.ERROR,
                     routingError = Routing.Error.NO_CHANNEL.value,

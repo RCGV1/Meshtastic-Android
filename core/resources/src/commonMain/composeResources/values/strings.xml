@@ -990,7 +990,7 @@
     <string name="message_device_managed">This radio is managed and can only be changed by a remote admin.</string>
     <string name="message_input_label">Message</string>
     <string name="message_routing_error_max_retransmit">Failed to deliver to mesh</string>
-    <string name="message_routing_error_no_channel">No channel selected</string>
+    <string name="message_routing_error_no_channel">Channel/key mismatch</string>
     <string name="message_routing_error_pki_failed">Could not send encrypted message</string>
     <string name="message_routing_error_pki_send_fail_public_key">Recipient key unavailable</string>
     <string name="message_routing_error_pki_unknown_pubkey">Recipient needs your key</string>

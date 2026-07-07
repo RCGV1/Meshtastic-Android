@@ -201,6 +201,19 @@ class MessageItemTest {
     }
 
     @Test
+    fun localMessage_displaysNoChannelRoutingErrorStatusText() = runComposeUiTest {
+        val testNode = NodePreviewParameterProvider().mickeyMouse
+        val message =
+            localMessage(node = testNode, status = MessageStatus.ERROR, routingError = Routing.Error.NO_CHANNEL.value)
+
+        setContent {
+            MessageItem(message = message, node = testNode, selected = false, onStatusClick = {}, ourNode = testNode)
+        }
+
+        onNodeWithText("Channel/key mismatch", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test
     fun localMessageStatus_invokesStatusClick() = runComposeUiTest {
         val testNode = NodePreviewParameterProvider().mickeyMouse
         val message = localMessage(node = testNode, status = MessageStatus.QUEUED)
